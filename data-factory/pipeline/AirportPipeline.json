@@ -1,0 +1,195 @@
+{
+	"name": "AirportPipeline",
+	"properties": {
+		"activities": [
+			{
+				"name": "IngestAirports",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "SetRawFileName",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "BinarySource",
+						"storeSettings": {
+							"type": "HttpReadSettings",
+							"requestMethod": "GET"
+						},
+						"formatSettings": {
+							"type": "BinaryReadSettings"
+						}
+					},
+					"sink": {
+						"type": "BinarySink",
+						"storeSettings": {
+							"type": "AzureBlobFSWriteSettings"
+						}
+					},
+					"enableStaging": false
+				},
+				"inputs": [
+					{
+						"referenceName": "AirportsSourceData",
+						"type": "DatasetReference",
+						"parameters": {
+							"relativeUrl": {
+								"value": "@pipeline().parameters.sourceRelativeUrl",
+								"type": "Expression"
+							},
+							"baseUrl": {
+								"value": "@pipeline().parameters.sourceBaseUrl",
+								"type": "Expression"
+							}
+						}
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "AirportsIngestedData",
+						"type": "DatasetReference",
+						"parameters": {
+							"RawFileSystem": {
+								"value": "@pipeline().parameters.rawFileSystem",
+								"type": "Expression"
+							},
+							"RawPath": {
+								"value": "@pipeline().parameters.rawPath",
+								"type": "Expression"
+							},
+							"RawFileName": {
+								"value": "@variables('RawFileName')",
+								"type": "Expression"
+							}
+						}
+					}
+				]
+			},
+			{
+				"name": "ProccessAirports",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "IngestAirports",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Airports/ProcessAirports",
+					"baseParameters": {
+						"SourceFile": {
+							"value": "@concat(pipeline().parameters.rawPath, '/', variables('RawFileName'))",
+							"type": "Expression"
+						},
+						"SourceFileSystem": {
+							"value": "@pipeline().parameters.rawFileSystem",
+							"type": "Expression"
+						},
+						"DestinationDatabase": {
+							"value": "@pipeline().parameters.queryDatabase",
+							"type": "Expression"
+						},
+						"DestinationTable": {
+							"value": "@pipeline().parameters.queryTable",
+							"type": "Expression"
+						},
+						"DestinationPath": {
+							"value": "@pipeline().parameters.queryPath",
+							"type": "Expression"
+						},
+						"DestinationFileSystem": {
+							"value": "@pipeline().parameters.queryFileSystem",
+							"type": "Expression"
+						}
+					},
+					"libraries": [
+						{
+							"whl": "dbfs:/airports/libraries/airports-0.0.1-py3-none-any.whl"
+						}
+					]
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "SetRawFileName",
+				"type": "SetVariable",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"variableName": "RawFileName",
+					"value": {
+						"value": "@concat('airports-', formatDateTime(utcnow(), 'yyyyMMdd-HHmmss'), '.dat')",
+						"type": "Expression"
+					}
+				}
+			}
+		],
+		"parameters": {
+			"sourceBaseUrl": {
+				"type": "string",
+				"defaultValue": "https://raw.githubusercontent.com"
+			},
+			"sourceRelativeUrl": {
+				"type": "string",
+				"defaultValue": "/jpatokal/openflights/master/data/airports-extended.dat"
+			},
+			"rawFileSystem": {
+				"type": "string",
+				"defaultValue": "default"
+			},
+			"rawPath": {
+				"type": "string",
+				"defaultValue": "airports"
+			},
+			"queryFileSystem": {
+				"type": "string",
+				"defaultValue": "default"
+			},
+			"queryPath": {
+				"type": "string",
+				"defaultValue": "databases"
+			},
+			"queryDatabase": {
+				"type": "string",
+				"defaultValue": "query"
+			},
+			"queryTable": {
+				"type": "string",
+				"defaultValue": "airports"
+			}
+		},
+		"variables": {
+			"RawFileName": {
+				"type": "String"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-03-16T22:37:33Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

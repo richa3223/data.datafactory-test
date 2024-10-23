@@ -1,0 +1,37 @@
+{
+	"name": "AirportsSourceData",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "AirportDataHTTP",
+			"type": "LinkedServiceReference",
+			"parameters": {
+				"baseUrl": {
+					"value": "@dataset().baseUrl",
+					"type": "Expression"
+				}
+			}
+		},
+		"parameters": {
+			"relativeUrl": {
+				"type": "string",
+				"defaultValue": "/jpatokal/openflights/master/data/airports-extended.dat"
+			},
+			"baseUrl": {
+				"type": "string",
+				"defaultValue": "https://raw.githubusercontent.com"
+			}
+		},
+		"annotations": [],
+		"type": "Binary",
+		"typeProperties": {
+			"location": {
+				"type": "HttpServerLocation",
+				"relativeUrl": {
+					"value": "@dataset().relativeUrl",
+					"type": "Expression"
+				}
+			}
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

@@ -1,0 +1,10 @@
+{
+	"name": "DataLakeEndpoint",
+	"properties": {
+		"privateLinkResourceId": "/subscriptions/2359bc6b-a302-40f3-85fe-73d1ad9f3dc6/resourceGroups/adf-test/providers/Microsoft.Storage/storageAccounts/adlseb54631a",
+		"groupId": "dfs",
+		"fqdns": [
+			"adlseb54631a.dfs.core.windows.net"
+		]
+	}
+}

@@ -1,0 +1,28 @@
+{
+	"name": "AzureDatabricks",
+	"properties": {
+		"annotations": [],
+		"type": "AzureDatabricks",
+		"typeProperties": {
+			"domain": "https://adb-723063792387841.1.azuredatabricks.net",
+			"authentication": "MSI",
+			"workspaceResourceId": "/subscriptions/2359bc6b-a302-40f3-85fe-73d1ad9f3dc6/resourceGroups/adf-test/providers/Microsoft.Databricks/workspaces/adbeb54631a",
+			"newClusterNodeType": "Standard_DS4_v2",
+			"newClusterNumOfWorker": "1",
+			"newClusterSparkConf": {
+				"spark.hadoop.fs.azure.account.auth.type.adlseb54631a.dfs.core.windows.net": "OAuth",
+				"spark.hadoop.fs.azure.account.oauth.provider.type.adlseb54631a.dfs.core.windows.net": "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider",
+				"spark.hadoop.fs.azure.account.oauth2.client.endpoint.adlseb54631a.dfs.core.windows.net": "https://login.microsoftonline.com/9d5bcecb-11a4-46c7-bf7c-8a351f3878ee/oauth2/token",
+				"spark.hadoop.fs.azure.account.oauth2.client.id.adlseb54631a.dfs.core.windows.net": "{{secrets/DatabricksSecrets/ServicePrincipalClientId}}",
+				"spark.hadoop.fs.azure.account.oauth2.client.secret.adlseb54631a.dfs.core.windows.net": "{{secrets/DatabricksSecrets/ServicePrincipalClientSecret}}"
+			},
+			"newClusterSparkEnvVars": {
+				"PYSPARK_PYTHON": "/databricks/python3/bin/python3"
+			},
+			"newClusterVersion": "9.1.x-scala2.12",
+			"newClusterInitScripts": [],
+			"clusterOption": "Fixed"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/linkedservices"
+}

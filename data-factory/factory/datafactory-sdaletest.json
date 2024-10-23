@@ -1,0 +1,9 @@
+{
+	"name": "datafactory-sdaletest",
+	"location": "uksouth",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "47a0d95c-ffae-46bd-aa80-871e2875f13c",
+		"tenantId": "9d5bcecb-11a4-46c7-bf7c-8a351f3878ee"
+	}
+}

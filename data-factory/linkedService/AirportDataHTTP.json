@@ -1,0 +1,23 @@
+{
+	"name": "AirportDataHTTP",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"parameters": {
+			"baseUrl": {
+				"type": "String",
+				"defaultValue": "https://raw.githubusercontent.com"
+			}
+		},
+		"annotations": [],
+		"type": "HttpServer",
+		"typeProperties": {
+			"url": "@{linkedService().baseUrl}",
+			"enableServerCertificateValidation": true,
+			"authenticationType": "Anonymous"
+		},
+		"connectVia": {
+			"referenceName": "ManagedVNetRuntime",
+			"type": "IntegrationRuntimeReference"
+		}
+	}
+}

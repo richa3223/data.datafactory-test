@@ -1,0 +1,4 @@
+databricks-sql-connector==0.9.4
+fastapi==0.75.0
+pandas==1.4.1
+uvicorn==0.17.6

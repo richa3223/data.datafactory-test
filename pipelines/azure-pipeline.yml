@@ -1,0 +1,491 @@
+trigger:
+  branches:
+    include:
+    - main
+    - adf_publish
+  paths:
+    exclude:
+    - data-factory/
+
+stages:
+- stage: Build
+  displayName: Build
+  pool:
+    vmImage: ubuntu-latest
+  jobs:
+  - job:
+    displayName: Build artefact
+    steps:
+      - checkout: self
+        path: datafactory
+      - checkout: git://$(System.TeamProject)/$(Build.Repository.Name)@adf_publish
+        path: datafactory_publish
+      - task: UsePythonVersion@0
+        displayName: Set Python version
+        inputs:
+          versionSpec: 3.8
+          addToPath: true
+          architecture: x64
+      - bash: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install wheel
+          pip install -r requirements.txt --prefer-binary
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Setup Python environment
+      - bash: |
+          source venv/bin/activate
+          pip install -e src/airports
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Setup development library
+      - bash: |
+          source venv/bin/activate
+          bandit -r src/
+          bandit -r -f xml -o TEST-bandit.xml src/
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Execute bandit security scan
+      - bash: |
+          source venv/bin/activate
+          pylint --output-format=msvs --reports=yes src/
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Execute pylint linting
+      - bash: |
+          source venv/bin/activate
+          flake8 src/
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Execute flake8 linting
+      - bash: |
+          source venv/bin/activate
+          pytest --disable-warnings -rp -vv --cov-report term --cov-report xml:cov.xml --cov=src --cov=tests -o junit_family=xunit2 --junitxml=TEST-airports.xml tests/unit
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Execute unit tests
+      - bash: |
+          source venv/bin/activate
+          pip wheel --wheel-dir dist src/airports
+        workingDirectory: $(Agent.BuildDirectory)/datafactory
+        displayName: Create wheel file
+
+      - task: CopyFiles@2
+        displayName: Copy assets to staging folder
+        inputs:
+          SourceFolder: $(Agent.BuildDirectory)
+          Contents: |
+            datafactory/requirements.txt
+            datafactory/infra/datafactory.json
+            datafactory/infra/datalake.json
+            datafactory/scripts/datafactory-link/datafactory.py
+            datafactory/scripts/datalake/datalake.py
+            datafactory/scripts/databricks-scim/databricks.py
+            datafactory/notebooks/**.py
+            datafactory/src/**/**.py
+            datafactory/tests/**/**.py
+            datafactory/tests/**/**.feature
+            datafactory/dist/*.whl
+            datafactory/TEST-*.xml
+            datafactory/cov.xml
+          TargetFolder: $(Build.ArtifactStagingDirectory)
+      - bash: |
+          pwd
+          COUNTER=0
+          while true; do
+            files=$(git show --pretty="" --name-only HEAD~$COUNTER)
+            result=$?
+            if [ $result -ne 0 ]; then
+              break
+            fi
+            file=$(echo "$files" | grep ARMTemplateForFactory.json)
+            if [[ ! -z $file ]]; then
+              echo Copying $file
+              mkdir -p $(Build.ArtifactStagingDirectory)/datafactory_publish/datafactory
+              cp $file $(Build.ArtifactStagingDirectory)/datafactory_publish/datafactory/
+              break
+            fi
+            let COUNTER+=1
+          done
+        displayName: Copy data factory assets to staging folder
+        workingDirectory: $(Agent.BuildDirectory)/datafactory_publish
+      - task: PublishBuildArtifacts@1
+        displayName: Publish build artefacts
+        inputs:
+          pathtoPublish: $(Build.ArtifactStagingDirectory)
+          artifactName: drop
+          publishLocation: Container
+      - task: PublishTestResults@2
+        displayName: Publish unit tests
+        inputs:
+            testResultsFormat: JUnit
+            testResultsFiles: '$(Build.ArtifactStagingDirectory)/datafactory/TEST-*.xml'
+            mergeTestResults: true
+            failTaskOnFailedTests: true
+            testRunTitle: Build Tests
+      - task: PublishCodeCoverageResults@1
+        inputs:
+          codeCoverageTool: 'Cobertura'
+          summaryFileLocation: '$(Build.ArtifactStagingDirectory)/datafactory/cov.xml'
+
+- stage: Dev
+  dependsOn: Build
+  displayName: Development
+  jobs:
+  - deployment: Development
+    environment: dev
+    pool:
+      vmImage: ubuntu-latest
+    workspace:
+      clean: all
+    variables:
+      - name: ResourceGroup
+        value: adf-test
+      - name: Location
+        value: uksouth
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: UsePythonVersion@0
+            displayName: Set Python version
+            inputs:
+              versionSpec: 3.8
+              addToPath: true
+              architecture: x64
+          - bash: |
+              python3 -m venv venv
+              source venv/bin/activate
+              pip install wheel
+              pip install -r requirements.txt --prefer-binary
+              pip install -e src/airports
+            displayName: Setup Python environment
+            workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+          - task: AzureCLI@2
+            displayName: Create resource group
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az group create --name $(ResourceGroup) --location $(Location)
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+
+          - task: AzureCLI@2
+            displayName: Deploy data factory infrastructure
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                identifier=$(echo Build.Repository.Uri | md5sum)
+                unique_identifier=${identifier:0:8}
+
+                datafactory=adf$unique_identifier
+                datafactory_id=$(az resource list --resource-group $(ResourceGroup) --resource-type Microsoft.DataFactory/factories --query "[?name == '"$datafactory"'].id" -otsv)
+                if [ ! -z "$datafactory_id" ]; then
+                  repo=$(az resource show --name $datafactory --resource-group $(ResourceGroup) --resource-type Microsoft.DataFactory/factories --query properties.repoConfiguration | jq -c)
+                fi
+                if [ -z "$repo" ]; then
+                  repo="{}"
+                fi
+
+                echo $repo
+
+                output=$(az deployment group create --resource-group $(ResourceGroup) --template-file infra/datafactory.json --parameters uniqueIdentifier=$unique_identifier repoConfiguration=$repo --query properties.outputs)
+                [ $? -eq 0 ] || false
+
+                storage_account=$(echo $output | jq -r .storageName.value)
+                datalake_account=$(echo $output | jq -r .dataLakeName.value)
+                echo "##vso[task.setvariable variable=FactoryName]"$(echo $output | jq -r .factoryName.value)
+                echo "##vso[task.setvariable variable=FactoryId]"$(echo $output | jq -r .factoryId.value)
+                echo "##vso[task.setvariable variable=FactoryPrincipal]"$(echo $output | jq -r .factoryPrincipal.value)
+                echo "##vso[task.setvariable variable=StorageId]"$(echo $output | jq -r .storageResourceId.value)
+                echo "##vso[task.setvariable variable=StorageName]"$storage_account
+                echo "##vso[task.setvariable variable=StorageUrl]"$(echo $output | jq -r .storageUrl.value)
+                echo "##vso[task.setvariable variable=StorageKey]"$(az storage account keys list --account-name $storage_account --query "[0].value" -otsv)
+                echo "##vso[task.setvariable variable=DataLakeId]"$(echo $output | jq -r .dataLakeResourceId.value)
+                echo "##vso[task.setvariable variable=DataLakeName]"$datalake_account
+                echo "##vso[task.setvariable variable=DataLakeUrl]"$(echo $output | jq -r .dataLakeUrl.value)
+                echo "##vso[task.setvariable variable=DataLakeKey]"$(az storage account keys list --account-name $datalake_account --query "[0].value" -otsv)
+                echo "##vso[task.setvariable variable=DatabricksId]"$(echo $output | jq -r .databricksId.value)
+                echo "##vso[task.setvariable variable=DatabricksUrl]"$(echo $output | jq -r .databricksUrl.value)
+                echo "##vso[task.setvariable variable=SecretScope]"DatabricksSecrets
+                echo "##vso[task.setvariable variable=TenantId]"$(az account show --query tenantId -otsv)
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+
+          - task: AzureCLI@2
+            displayName: Execute infrastructure tests
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+                pytest --disable-warnings -rp -vv -o junit_family=xunit2 --junitxml=TEST-infrastructure.xml \
+                  tests/infrastructure \
+                  --databricks-id $(DatabricksId) \
+                  --datafactory-id $(FactoryId) \
+                  --datalake-id $(DataLakeId) \
+                  --storage-id $(StorageId)
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+          - task: PublishTestResults@2
+            displayName: Publish infrastructure tests
+            inputs:
+                testResultsFormat: JUnit
+                testResultsFiles: '$(Pipeline.Workspace)/drop/datafactory/TEST-infrastructure.xml'
+                mergeTestResults: true
+                failTaskOnFailedTests: true
+                testRunTitle: Infrastructure Tests
+
+          - task: AzureCLI@2
+            displayName: Secure data lake
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+
+                object_id=$(az ad sp show --id $servicePrincipalId --query objectId -otsv)
+
+                ip=$(az rest --skip-authorization-header --method get --uri https://ipinfo.io/json --query ip -otsv)
+                az storage account network-rule add --account-name $(DataLakeName) --ip-address $ip > /dev/null
+                az resource update --id $(DataLakeId) --set properties.networkAcls.bypass="AzureServices" > /dev/null
+
+                sleep 25
+
+                retries=5
+                while [[ $retries -gt 0 ]]; do
+                  python scripts/datalake/datalake.py \
+                    --account-name $(DataLakeName) \
+                    --storage-key $(DataLakeKey) \
+                    --input-file infra/datalake.json \
+                    "DATA_FACTORY=$(FactoryPrincipal)" \
+                    "PRINCIPAL=$object_id" \
+                    "DATALAKE_RW=DataLake RW"
+                  result=$?
+
+                  if [[ $result -eq 0 ]]; then
+                    let "retries=0"
+                  else
+                    echo Will retry - $retries
+                    sleep 5
+                    let "retries-=1"
+                  fi
+                done
+
+                az resource update --id $(DataLakeId) --remove properties.networkAcls.bypass > /dev/null
+                az storage account network-rule remove --account-name $(DataLakeName) --ip-address $ip > /dev/null
+
+                [ $result -eq 0 ] || false
+
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+              addSpnToEnvironment: true
+
+          - task: AzureCLI@2
+            displayName: Disable data factory triggers
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                triggers="$(az rest --method GET --uri https://management.azure.com$(FactoryId)/triggers?api-version=2018-06-01 --query value[*].name -otsv)"
+                for trg in $triggers; do
+                  az rest --method POST --uri https://management.azure.com$(FactoryId)/triggers/$trg/stop?api-version=2018-06-01 > /dev/null
+                done
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory_publish
+
+          - task: AzureCLI@2
+            displayName: Deploy data factory ARM template
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az deployment group create \
+                  --resource-group $(ResourceGroup) \
+                  --template-file datafactory/ARMTemplateForFactory.json \
+                  --parameters \
+                    factoryName=$(FactoryName) \
+                    DataLake_accountKey=$(DataLakeKey) \
+                    DataLake_properties_typeProperties_url=$(DataLakeUrl) \
+                    DataLakeEndpoint_properties_privateLinkResourceId=$(DataLakeId) \
+                    DataLakeEndpoint_properties_fqdns='[]' \
+                    StorageAccountEndpoint_properties_privateLinkResourceId=$(StorageId) \
+                    StorageAccountEndpoint_properties_fqdns='[]' \
+                    AzureDatabricks_properties_typeProperties_workspaceUrl=https://$(DatabricksUrl) \
+                    AzureDatabricks_properties_typeProperties_workspaceResourceId=$(DatabricksId) \
+                    AzureDatabricks_properties_typeProperties_newClusterSparkConf=@<(printf '{
+                      "spark.hadoop.fs.azure.account.auth.type.$(DataLakeName).dfs.core.windows.net": "OAuth",
+                      "spark.hadoop.fs.azure.account.oauth.provider.type.$(DataLakeName).dfs.core.windows.net": "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider",
+                      "spark.hadoop.fs.azure.account.oauth2.client.endpoint.$(DataLakeName).dfs.core.windows.net": "https://login.microsoftonline.com/$(TenantId)/oauth2/token",
+                      "spark.hadoop.fs.azure.account.oauth2.client.id.$(DataLakeName).dfs.core.windows.net": "{{secrets/$(SecretScope)/ServicePrincipalClientId}}",
+                      "spark.hadoop.fs.azure.account.oauth2.client.secret.$(DataLakeName).dfs.core.windows.net": "{{secrets/$(SecretScope)/ServicePrincipalClientSecret}}"
+                    }')
+                [ $? -eq 0 ] || false
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory_publish
+
+          - task: AzureCLI@2
+            displayName: Approve private link connection
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+                subscription=$(az account show --query id -otsv)
+                python scripts/datafactory-link/datafactory.py \
+                  --subscription $subscription \
+                  --data-factory-rg $(ResourceGroup) \
+                  --data-factory-name $(FactoryName)
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+
+          - task: AzureCLI@2
+            displayName: Enable data factory triggers
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                triggers="$(az rest --method GET --uri https://management.azure.com$(FactoryId)/triggers?api-version=2018-06-01 --query value[*].name -otsv)"
+                for trg in $triggers; do
+                  az rest --method POST --uri https://management.azure.com$(FactoryId)/triggers/$trg/start?api-version=2018-06-01 > /dev/null
+                done
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory_publish
+            condition: always()
+
+          - task: AzureCLI@2
+            displayName: Create Data Factory MSI account in Databricks
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+
+                app_id=$(az ad sp show --id $(FactoryPrincipal) --query appId -otsv)
+
+                python scripts/databricks-scim/databricks.py sp \
+                  --workspace-url $(DatabricksUrl) \
+                  --service-principal $app_id \
+                  --service-principal-name $(FactoryName)
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+
+          - task: AzureCLI@2
+            displayName: Create Databricks secret scope
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+
+                app_id=$(az ad sp show --id $(FactoryPrincipal) --query appId -otsv)
+
+                export DATABRICKS_TOKEN=$(az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d --query accessToken -otsv)
+                export DATABRICKS_HOST=https://$(DatabricksUrl)
+
+                if [[ $(databricks secrets list-scopes --output JSON | jq ".scopes | map(select(.name == \"$(SecretScope)\")) | length") -eq 0 ]]; then
+                  databricks secrets create-scope --scope $(SecretScope)
+                fi
+
+                databricks secrets put --scope $(SecretScope) --key ServicePrincipalClientId --string-value $servicePrincipalId
+                databricks secrets put --scope $(SecretScope) --key ServicePrincipalClientSecret --string-value $servicePrincipalKey
+                databricks secrets put --scope $(SecretScope) --key StorageAccountName --string-value $(StorageName)
+                databricks secrets put --scope $(SecretScope) --key StorageAccountKey --string-value $(StorageKey)
+                databricks secrets put --scope $(SecretScope) --key DataLakeName --string-value $(DataLakeName)
+
+                databricks secrets put-acl --scope $(SecretScope) --principal $app_id --permission READ
+
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+              addSpnToEnvironment: true
+
+          - task: AzureCLI@2
+            displayName: Upload Databricks notebooks
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+
+                export DATABRICKS_TOKEN=$(az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d --query accessToken -otsv)
+                export DATABRICKS_HOST=https://$(DatabricksUrl)
+
+                databricks workspace mkdirs /Airports
+                databricks workspace import --language PYTHON --format SOURCE --overwrite notebooks/ProcessAirports.py /Airports/ProcessAirports
+
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+
+          - task: AzureCLI@2
+            displayName: Upload Databricks wheel files
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+
+                export DATABRICKS_TOKEN=$(az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d --query accessToken -otsv)
+                export DATABRICKS_HOST=https://$(DatabricksUrl)
+
+                path=dbfs:/airports/libraries
+                databricks fs mkdirs $path
+                databricks fs cp --overwrite --recursive dist/ dbfs:/airports/libraries
+
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+
+          - task: AzureCLI@2
+            displayName: Execute component tests
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+                pytest --disable-warnings -rp -vv -o junit_family=xunit2 --junitxml=TEST-component.xml \
+                  tests/component
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+          - task: PublishTestResults@2
+            displayName: Publish component tests
+            inputs:
+                testResultsFormat: JUnit
+                testResultsFiles: '$(Pipeline.Workspace)/drop/datafactory/TEST-component.xml'
+                mergeTestResults: true
+                failTaskOnFailedTests: true
+                testRunTitle: Component Tests
+
+          - task: AzureCLI@2
+            displayName: Execute integration tests
+            inputs:
+              azureSubscription: DataPlatformLandingZone
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                source venv/bin/activate
+
+                ip=$(az rest --skip-authorization-header --method get --uri https://ipinfo.io/json --query ip -otsv)
+                az storage account network-rule add --account-name $(DataLakeName) --ip-address $ip > /dev/null
+                az storage account network-rule add --account-name $(StorageName) --ip-address $ip > /dev/null
+
+                sleep 30
+
+                pytest --disable-warnings -rp -vv -o junit_family=xunit2 --junitxml=TEST-integration.xml \
+                  tests/integration \
+                  --databricks-id $(DatabricksId) \
+                  --datafactory-id $(FactoryId) \
+                  --datalake-id $(DataLakeId) \
+                  --storage-id $(StorageId) \
+                  --secret-scope $(SecretScope)
+
+                result=$?
+
+                az storage account network-rule remove --account-name $(StorageName) --ip-address $ip > /dev/null
+                az storage account network-rule remove --account-name $(DataLakeName) --ip-address $ip > /dev/null
+
+                [ $result -eq 0 ] || false
+              workingDirectory: $(Pipeline.Workspace)/drop/datafactory
+          - task: PublishTestResults@2
+            displayName: Publish integration tests
+            inputs:
+                testResultsFormat: JUnit
+                testResultsFiles: '$(Pipeline.Workspace)/drop/datafactory/TEST-integration.xml'
+                mergeTestResults: true
+                failTaskOnFailedTests: true
+                testRunTitle: Integration Tests

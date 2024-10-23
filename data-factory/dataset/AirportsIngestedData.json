@@ -1,0 +1,40 @@
+{
+	"name": "AirportsIngestedData",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "DataLake",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"RawFileSystem": {
+				"type": "string"
+			},
+			"RawPath": {
+				"type": "string"
+			},
+			"RawFileName": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "Binary",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobFSLocation",
+				"fileName": {
+					"value": "@dataset().RawFileName",
+					"type": "Expression"
+				},
+				"folderPath": {
+					"value": "@dataset().RawPath",
+					"type": "Expression"
+				},
+				"fileSystem": {
+					"value": "@dataset().RawFileSystem",
+					"type": "Expression"
+				}
+			}
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

@@ -1,0 +1,10 @@
+{
+	"name": "StorageAccountEndpoint",
+	"properties": {
+		"privateLinkResourceId": "/subscriptions/2359bc6b-a302-40f3-85fe-73d1ad9f3dc6/resourceGroups/adf-test/providers/Microsoft.Storage/storageAccounts/stgeb54631a",
+		"groupId": "blob",
+		"fqdns": [
+			"stgeb54631a.blob.core.windows.net"
+		]
+	}
+}

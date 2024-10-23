@@ -1,0 +1,111 @@
+{
+    "$acls": {
+        "traverse": [
+            {
+                "type": "user",
+                "permission": "rwx"
+            },
+            {
+                "type": "group",
+                "permission": "---"
+            },
+            {
+                "type": "other",
+                "permission": "---"
+            },
+            {
+                "type": "user",
+                "identity": "$DATA_FACTORY",
+                "permission": "--x"
+            },
+            {
+                "type": "user",
+                "identity": "$PRINCIPAL",
+                "permission": "--x"
+            },
+            {
+                "type": "group",
+                "identity": "$DATALAKE_RW",
+                "permission": "--x"
+            }
+        ],
+        "default": [
+            {
+                "type": "user",
+                "permission": "rwx"
+            },
+            {
+                "type": "group",
+                "permission": "---"
+            },
+            {
+                "type": "other",
+                "permission": "---"
+            },
+            {
+                "type": "user",
+                "identity": "$DATA_FACTORY",
+                "permission": "rwx"
+            },
+            {
+                "type": "user",
+                "identity": "$PRINCIPAL",
+                "permission": "rwx"
+            },
+            {
+                "type": "group",
+                "identity": "$DATALAKE_RW",
+                "permission": "rwx"
+            },
+            {
+                "default": true,
+                "type": "user",
+                "permission": "rwx"
+            },
+            {
+                "default": true,
+                "type": "group",
+                "permission": "---"
+            },
+            {
+                "default": true,
+                "type": "other",
+                "permission": "---"
+            },
+            {
+                "default": true,
+                "type": "user",
+                "identity": "$DATA_FACTORY",
+                "permission": "rwx"
+            },
+            {
+                "default": true,
+                "type": "user",
+                "identity": "$PRINCIPAL",
+                "permission": "rwx"
+            },
+            {
+                "default": true,
+                "type": "group",
+                "identity": "$DATALAKE_RW",
+                "permission": "rwx"
+            }
+        ]
+    },
+    "file_systems": {
+        "default": {
+            "/": {
+                "recursive": false,
+                "acl": "#traverse"
+            },
+            "/airports": {
+                "recursive": false,
+                "acl": "#default"
+            },
+            "/databases": {
+                "recursive": false,
+                "acl": "#default"
+            }
+        }
+    }
+}

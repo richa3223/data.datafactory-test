@@ -1,0 +1,9 @@
+{
+	"name": "adf542aeskmb",
+	"location": "uksouth",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "8171ffb0-2517-48e2-ab5b-e4f5475d6979",
+		"tenantId": "9d5bcecb-11a4-46c7-bf7c-8a351f3878ee"
+	}
+}
